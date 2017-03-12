@@ -5,3 +5,4 @@
 .Rprofile
 packrat/
 .DS_Store
+packrat/lib*/
