@@ -57,6 +57,7 @@ copy_to.src_sqlserver <- function (dest, df, name = deparse(substitute(df)), ove
                                         types = NULL, temporary = TRUE, unique_indexes = NULL, indexes = NULL, 
                                         analyze = TRUE, ...) {
   if (temporary) {
+    stop('Temporary table are not supported yet')
     name = if (substr(name, 1, 1) != '#') name <- paste0('#', name)
     temporary = FALSE
   }
@@ -89,6 +90,7 @@ compute.tbl_sql <- function(x, name = random_table_name(), temporary = TRUE,
                             unique_indexes = list(), indexes = list(),
                             ...) {
   if (temporary) {
+    stop('Temporary table are not supported yet')
     name = if (substr(name, 1, 1) != '#') name <- paste0('#', name)
     temporary = FALSE
   } 
