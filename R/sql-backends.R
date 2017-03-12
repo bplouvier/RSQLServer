@@ -1,20 +1,135 @@
-#' @importFrom dplyr sql_select sql
-#' @export
+#' @import DBI
+NULL
 
-sql_select.SQLServerConnection <- function (con, select, from, where = NULL,
-  group_by = NULL, having = NULL, order_by = NULL, limit = NULL, distinct = FALSE,
-  offset = NULL, fetch = NULL, is_percent = NULL, into = NULL, ...) {
+#' @import dplyr
+NULL
+
+sqlserver_version <- function (dbObj, ...) {
+  parse_version <- function(odbc_con) {
+    version_str <- dbGetInfo(odbc_con)$db.version
+    as.integer(strsplit(version_str, '.', TRUE)[[1]][1])
+  }
+  version <- switch(class(dbObj)[1],
+                    OdbcDriver = 0,
+                    OdbcConnection = parse_version(dbObj),
+                    OdbcResult = parse_version(dbObj@connection),
+                    error("Unknown DBIObject", call. = FALSE)
+  )
+  if (version == 0) warning("Unknown SQL Server version. Try calling 'sqlserver_version' on a OdbcConnection or OdbcResult object.")
+  return(version)
+}
+
+#' @importFrom dplyr db_has_table build_sql escape
+#' @export
+db_has_table.OdbcConnection <- function (con, table) {
+  if (substr(table, 1, 1) == '#') {
+    object_query <- paste0('tempdb..', table)
+  } else {
+    object_query <- table
+  }
+  
+  qry <- build_sql(
+    "SELECT CASE WHEN OBJECT_ID(N", 
+    escape(object_query),
+    ", N'U') IS NULL THEN 0 ELSE 1 END AS table_found")
+  
+  res <- dbGetQuery(con, qry)
+  if(nrow(res) != 1) {
+    stop(paste0("Found ", nrow(res), " rows when checking if table ", table, " exists (expecting exactly one row)"))
+  }
+  invisible(res[[1]] == 1)
+}
+
+#' @importFrom dplyr db_save_query sql_subquery
+#' @export
+db_save_query.OdbcConnection <- function (con, sql, name, temporary = TRUE,
+  ...) {
+  # http://smallbusiness.chron.com/create-table-query-results-microsoft-sql-50836.html
+  qry <- build_sql("SELECT * INTO ", ident(name), " FROM ",
+    sql_subquery(con, sql), con = con)
+  dbExecute(con, qry)
+}
+
+#' @importFrom dplyr db_drop_table
+#' @export
+db_drop_table.OdbcConnection <- function(con, table, force = FALSE, ...) {
+  # Equivalent of if exists. When force = TRUE, the drop command will only execute if the table exists
+  if (db_has_table(con, table) || !force) {
+    sql <- build_sql("DROP TABLE ", ident(table), con = con)
+    dbExecute(con, sql)
+  } 
+}
+
+#' Todo: find a solution for storing rownames
+#' @export
+db_insert_into.OdbcConnection <- function(con, table, values, ...) {
+  rownames(values) <- NULL
+  DBI::dbWriteTable(con, table, values, append = TRUE)
+}
+
+#' @importFrom dplyr db_create_index
+#' @export
+db_create_index.OdbcConnection <- function(con, table, columns,
+  name = NULL, unique = FALSE, ...) {
+  # Modified from:
+  # https://github.com/hadley/dplyr/blob/053a996cb12aeb8c0ac305cbe268c5590a4ea3e5/R/dbi-s3.r#L151
+  # Work around: https://github.com/hadley/dplyr/issues/1912
+  # SQL Server index creation does not return result set so dbGetQuery fails.
+  assertthat::assert_that(assertthat::is.string(table), is.character(columns))
+  name <- name %||% paste0(c(table, columns), collapse = "_")
+  fields <- escape(ident(columns), parens = TRUE, con = con)
+  sql <- build_sql(
+    "CREATE ", if (unique) sql("UNIQUE "), "INDEX ", ident(name),
+    " ON ", ident(table), " ", fields,
+    con = con)
+  assertthat::is.number(dbExecute(con, sql))
+}
+
+#' @importFrom dplyr db_analyze ident build_sql
+#' @export
+db_analyze.OdbcConnection <- function (con, table, ...) {
+  TRUE
+}
+
+# Inherited db_create_index.DBIConnection method from dplyr
+
+#' @importFrom dplyr db_explain
+#' @export
+db_explain.OdbcConnection <- function (con, sql, ...) {
+  # SET SHOWPLAN_ALL available from SQL Server 2000 on.
+  # https://technet.microsoft.com/en-us/library/aa259203(v=sql.80).aspx
+  # http://msdn.microsoft.com/en-us/library/ms187735.aspx
+  # http://stackoverflow.com/a/7359705/1193481
+  dbSendStatement(con, "SET SHOWPLAN_ALL ON")
+  on.exit(dbSendStatement(con, "SET SHOWPLAN_ALL OFF"))
+  res <- dbGetQuery(con, sql) %>%
+    dplyr::select_("StmtId", "NodeId", "Parent", "PhysicalOp", "LogicalOp",
+      "Argument", "TotalSubtreeCost")
+  paste(utils::capture.output(print(res)), collapse = "\n")
+}
+
+#' @importFrom dplyr src_desc
+#' @export
+src_desc.OdbcConnection <- function(con) {
+  info <- dbGetInfo(con)
+  paste0(info$dbms.name, " ", info$db.version, " [", info$dbname, "]")
+}
+
+#' @importFrom dplyr sql_select sql
+#' @importFrom purrr %||%
+#' @export
+sql_select.OdbcConnection <- function (con, select, from, where = NULL,
+                                       group_by = NULL, having = NULL, order_by = NULL, limit = NULL, distinct = FALSE, ...) {
 
   # REFERENCES --------------------------------------------------------------
   # 2000 : https://technet.microsoft.com/en-us/library/aa259187(v=sql.80).aspx
   # 2005+: https://msdn.microsoft.com/en-us/library/ms189499(v=sql.90).aspx
 
-
   # SETUP -------------------------------------------------------------------
 
   out <- vector("list", 10)
   names(out) <- c("select", "from", "where", "group_by", "having",
-    "order_by", "limit", "offset", "fetch", "into")
+                  "order_by", "limit")
 
   # SELECT ------------------------------------------------------------------
 
@@ -28,20 +143,14 @@ sql_select.SQLServerConnection <- function (con, select, from, where = NULL,
     if (length(limit) == 0L) {
       limit <- mssql_top(con, 100, TRUE)
     } else {
-      limit <- mssql_top(con, limit, is_percent %||% FALSE)
+      limit <- mssql_top(con, limit, FALSE)
     }
   }
 
   assertthat::assert_that(is.character(select), length(select) > 0L)
   out$select <- build_sql("SELECT ",
-    if (distinct) sql("DISTINCT "), limit, " ",
-    escape(select, collapse = ", ", con = con), con = con)
-
-  # INTO --------------------------------------------------------------------
-
-  if (length(into) > 0L) {
-    out$into <- build_sql("INTO ", into, con = con)
-  }
+                          if (distinct) sql("DISTINCT "), limit, " ",
+                          escape(select, collapse = ", ", con = con), con = con)
 
   # FROM --------------------------------------------------------------------
 
@@ -53,7 +162,7 @@ sql_select.SQLServerConnection <- function (con, select, from, where = NULL,
   if (length(where) > 0L) {
     assertthat::assert_that(is.character(where))
     out$where <- build_sql("WHERE ",
-      escape(where, collapse = " AND ", con = con))
+                           escape(where, collapse = " AND ", con = con))
   }
 
   # GROUP BY ----------------------------------------------------------------
@@ -61,7 +170,7 @@ sql_select.SQLServerConnection <- function (con, select, from, where = NULL,
   if (length(group_by) > 0L) {
     assertthat::assert_that(is.character(group_by), length(group_by) > 0L)
     out$group_by <- build_sql("GROUP BY ",
-      escape(group_by, collapse = ", ", con = con))
+                              escape(group_by, collapse = ", ", con = con))
   }
 
   # HAVING ------------------------------------------------------------------
@@ -69,7 +178,7 @@ sql_select.SQLServerConnection <- function (con, select, from, where = NULL,
   if (length(having) > 0L) {
     assertthat::assert_that(assertthat::is.string(having))
     out$having <- build_sql("HAVING ",
-      escape(having, collapse = ", ", con = con))
+                            escape(having, collapse = ", ", con = con))
   }
 
   # ORDER BY ----------------------------------------------------------------
@@ -77,28 +186,7 @@ sql_select.SQLServerConnection <- function (con, select, from, where = NULL,
   if (length(order_by) > 0L) {
     assertthat::assert_that(is.character(order_by), length(order_by) > 0L)
     out$order_by <- build_sql("ORDER BY ",
-      escape(order_by, collapse = ", ", con = con))
-  }
-
-  # Offset
-  if (length(offset) > 0L) {
-    # OFFSET/FETCH supported for SQL Server 2012 and higher (i.e. 11 and higher)
-    # when using ORDER BY
-    # http://stackoverflow.com/questions/187998/row-offset-in-sql-server
-    # MSSQL versioning: http://support2.microsoft.com/kb/321185
-    # OFFSET/FETCH: http://msdn.microsoft.com/en-us/library/ms188385(v=sql.110).aspx
-    assertthat::assert_that(length(order_by) > 0L,
-      dbGetInfo(con)$db.version >= 11, is.integer(offset), offset >= 0)
-    out$offset <- build_sql("OFFSET ", offset, con = con)
-  }
-
-  # Fetch
-  if (length(fetch) > 0L) {
-    # SQL Server 2012 + equivalent of LIMIT is FETCH (used with OFFSET)
-    # offset will be non-NULL if it is set and SQL Server dependency is met.
-    assertthat::assert_that(length(offset) > 0L, dbGetInfo(con)$db.version >= 11,
-      is.integer(fetch), fetch >= 0)
-    out$fetch <- build_sql("FETCH ", fetch, " ONLY", con = con)
+                              escape(order_by, collapse = ", ", con = con))
   }
 
   # Resulting SELECT --------------------------------------------------------
@@ -113,7 +201,7 @@ mssql_top <- function (con, n, is_percent = NULL) {
   # https://msdn.microsoft.com/en-us/library/ms189463(v=sql.90).aspx
   assertthat::assert_that(assertthat::is.number(n), n >= 0)
   n <- as.integer(n)
-  is_mssql_2000 <- dbGetInfo(con)$db.version[1,1] == 8
+  is_mssql_2000 <- sqlserver_version(con) == 8
   if (is.null(is_percent) || !isTRUE(is_percent)) {
     if (!is_mssql_2000) n <- escape(n, parens = TRUE)
     return(build_sql("TOP ", n))
@@ -141,23 +229,41 @@ mssql_top <- function (con, n, is_percent = NULL) {
 #' @importFrom dplyr sql_translate_env sql_variant sql_translator base_scalar
 #' @importFrom dplyr base_agg sql_prefix base_win
 #' @export
-sql_translate_env.SQLServerConnection <- function (con) {
+sql_translate_env.OdbcConnection <- function (con) {
   sql_variant(
     scalar = sql_translator(.parent = base_scalar,
-      # http://sqlserverplanet.com/tsql/format-string-to-date
-      as.POSIXct = function(x) build_sql("CAST(", x, " AS DATETIME)"),
-      # DATE data type only available since SQL Server 2008
-      as.Date = function (x) build_sql("CAST(", x, " AS DATE)"),
-      as.numeric = function(x) build_sql("CAST(", x, " AS FLOAT)"),
-      as.character = function(x) build_sql("CAST(", x, " AS NVARCHAR(4000))")
+                            # http://sqlserverplanet.com/tsql/format-string-to-date
+                            as.POSIXct = function(x) build_sql("CAST(", x, " AS DATETIME)"),
+                            # DATE data type only available since SQL Server 2008
+                            as.Date = function (x) build_sql("CAST(", x, " AS DATE)"),
+                            as.numeric = function(x) build_sql("CAST(", x, " AS FLOAT)"),
+                            as.character = function(x) build_sql("CAST(", x, " AS NVARCHAR(4000))")
     ),
     aggregate = sql_translator(.parent = base_agg,
-      n = function() sql("COUNT(*)"),
-      mean = sql_prefix('AVG'),
-      sd = sql_prefix("STDEV"),
-      sdp = sql_prefix("STDEVP"),
-      varp = sql_prefix("VARP")
+                               n = function() sql("COUNT(*)"),
+                               mean = sql_prefix('AVG'),
+                               sd = sql_prefix("STDEV"),
+                               sdp = sql_prefix("STDEVP"),
+                               varp = sql_prefix("VARP")
     ),
     window = base_win
   )
+}
+
+#' @importFrom dplyr db_begin
+#' @export
+db_begin.OdbcConnection <- function(con) {
+  invisible(TRUE)
+}
+
+#' @importFrom dplyr db_commit
+#' @export
+db_commit.OdbcConnection <- function(con) {
+  invisible(TRUE)
+}
+
+#' @importFrom dplyr db_rollback
+#' @export
+db_rollback.OdbcConnection <- function(con) {
+  invisible(TRUE)
 }

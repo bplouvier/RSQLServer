@@ -30,98 +30,134 @@
 #' by_field %>% summarise(ave = mean(numeric.field))
 #' # See dplyr documentation for further information on data operations
 #' }
-#' @importFrom dplyr src_sql
 #' @export
-src_sqlserver <- function (server, file = NULL, database = "",
-  type = "sqlserver", port = "", properties = list()) {
-  con <- dbConnect(SQLServer(), server, file, database , type, port, properties)
-  info <- dbGetInfo(con)
-  src_sql("sqlserver", con, info = info)
+src_sqlserver <- function(host = NULL, database = NULL, user = NULL, password = NULL, ...) {
+  if (!requireNamespace("odbc", quietly = TRUE)) {
+    stop("odbc package required to connect to SQL Server db", call. = FALSE)
+  }
+  driver='ODBC Driver 13 for SQL Server'
+  con <- DBI::dbConnect(
+    odbc::odbc(),
+    driver = 'ODBC Driver 13 for SQL Server',
+    database = database,
+    uid = user,
+    pwd = password,
+    server = host,
+    port = 1433, ...
+  )
+  src <- dplyr::src_dbi(con, auto_disconnect = TRUE)
+  newclass <- c('src_sqlserver', class(src))
+  class(src) <- newclass
+  src
 }
 
-#' @importFrom dplyr src_desc
+#' @importFrom dplyr copy_to
 #' @export
-src_desc.src_sqlserver <- function (x) {
-  info <- x$info
-  paste0("SQLServer ", info$db.version, " [", info$username, "@",
-    info$host, ":", info$port, "/", info$dbname, "]")
+copy_to.src_sqlserver <- function (dest, df, name = deparse(substitute(df)), overwrite = FALSE, 
+                                        types = NULL, temporary = TRUE, unique_indexes = NULL, indexes = NULL, 
+                                        analyze = TRUE, ...) {
+  if (temporary) {
+    name = if (substr(name, 1, 1) != '#') name <- paste0('#', name)
+    temporary = FALSE
+  }
+  NextMethod(
+    dest, 
+    df, 
+    name = name, 
+    overwrite = overwrite, 
+    types = types, 
+    temporary=temporary, 
+    unique_indexes = unique_indexes, 
+    indexes = indexes, 
+    analyze = analyze,
+    ...)
 }
 
-#' @importFrom dplyr tbl tbl_sql
+# Adds a custom tbl_sqlserver class to the tbl class
+#' @importFrom dplyr tbl
 #' @export
-tbl.src_sqlserver <- function (src, from, ...) {
-  tbl_sql("sqlserver", src = src, from = from, ...)
+tbl.src_sqlserver <- function(src, from, ...) {
+  dbi_tbl <- NextMethod()
+  newclass <- c('tbl_sqlserver', class(dbi_tbl))
+  class(dbi_tbl) <- newclass
+  dbi_tbl
 }
 
-#' @importFrom dplyr copy_to db_data_type con_acquire con_release
+#' @importFrom dplyr compute
 #' @export
+compute.tbl_sql <- function(x, name = random_table_name(), temporary = TRUE,
+                            unique_indexes = list(), indexes = list(),
+                            ...) {
+  if (temporary) {
+    name = if (substr(name, 1, 1) != '#') name <- paste0('#', name)
+    temporary = FALSE
+  } 
+  NextMethod(
+    x, 
+    name = name, 
+    temporary = temporary,
+    unique_indexes = unique_indexes, 
+    indexes = indexes, 
+    ...
+  )
+}
 
-copy_to.src_sqlserver <- function (dest, df, name = NULL, types = NULL,
-  temporary = TRUE, unique_indexes = NULL, indexes = NULL, ...) {
-  # Modified version of dplyr method:
-  # https://github.com/hadley/dplyr/blob/36687792b349bfeca24c69177cfb74b7fee341c6/R/tbl-sql.r#L329
-  # Modification necessary because temporary tables in SQL Server are
-  # prefixed by `#` and so db_insert_into() needs to pick up this name from
-  # db_create_table() whereas this isn't necessary in dplyr method.
-  assertthat::assert_that(is.data.frame(df),
-    is.null(name) || assertthat::is.string(name),
-    assertthat::is.flag(temporary))
-
-  name <- name %||% deparse(substitute(df))
-  class(df) <- "data.frame" # avoid S4 dispatch problem in dbSendPreparedQuery
-
-  con <- con_acquire(dest)
-  tryCatch({
-    if (isTRUE(db_has_table(con, name))) {
-      stop("Table ", name, " already exists.", call. = FALSE)
+#' @importFrom dplyr db_data_type
+#' @export
+db_data_type.tbl_sql <- function (con, fields) 
+{
+  # SQL types --------------------------------------------------------------
+  
+  char_type <- function (x, obj) {
+    # SQL Server 2000 does not support nvarchar(max) type.
+    # TEXT is being deprecated. Make sure SQL types are UNICODE variants
+    # (prefixed by N).
+    # https://technet.microsoft.com/en-us/library/aa258271(v=sql.80).aspx
+    n <- max(max(nchar(as.character(x), keepNA = FALSE)), 1)
+    if (n > 4000) {
+      if (sqlserver_version(obj) < 9) {
+        n <- "4000"
+      } else {
+        n <- "MAX"
+      }
     }
-    types <- types %||% db_data_type(con, df)
-    names(types) <- names(df)
-    name <- db_create_table(con, name, types, temporary = temporary)
-    db_insert_into(con, name, df, temporary = temporary)
-    db_create_indexes(con, name, unique_indexes, unique = TRUE)
-    db_create_indexes(con, name, indexes, unique = FALSE)
-    # SQL Server doesn't have ANALYZE TABLE support so this part of
-    # copy_to.src_sql has been dropped
-  }, finally = {
-    con_release(dest, con)
-  })
-
-  tbl(dest, name)
+    paste0("NVARCHAR(", n, ")")
+  }
+  
+  binary_type <- function (x, obj) {
+    # SQL Server 2000 does not support varbinary(max) type.
+    n <- max(max(nchar(x, keepNA = FALSE)), 1)
+    if (n > 8000) {
+      if (sqlserver_version(obj) < 9) {
+        # https://technet.microsoft.com/en-us/library/aa225972(v=sql.80).aspx
+        n <- "8000"
+      } else {
+        n <- "MAX"
+      }
+    }
+    paste0("VARBINARY(", n, ")")
+  }
+  
+  date_type <- function (x, obj) {
+    if (sqlserver_version(obj) < 10) {
+      # DATE available in >= SQL Server 2008 (>= v.10)
+      "DATETIME"
+    } else {
+      "DATE"
+    }
+  }
+  
+  as_is_type <- function(x, obj) {
+    class(x) <- class(x)[-match("AsIs", class(x))]
+    dbDataType(obj, x)
+  }
+  
+  data_frame_data_type <- function(x, obj) {
+    vapply(x, dbDataType, FUN.VALUE = character(1), dbObj = obj, USE.NAMES = TRUE)
+  }
+  
+  # Apply SQL types functions ------------------------------------------------
+  
+  vapply(fields, dbDataType, dbObj = con, FUN.VALUE = character(1))
 }
 
-
-#' @importFrom dplyr compute op_vars select_ sql_render tbl group_by_ groups
-#' @importFrom dplyr db_create_indexes %>%
-#' @export
-compute.tbl_sqlserver <- function(x, name = random_table_name(), temporary = TRUE,
-  unique_indexes = list(), indexes = list(), ...) {
-
-  # Based on dplyr:
-  # https://github.com/hadley/dplyr/blob/284b91d7357cd3c184843bf9206d19cc8c0cd0e3/R/tbl-sql.r#L364
-  # Modified because db_save_query returns a temp table name which must be used
-  # by subsequent method calls.
-
-  if (!is.list(indexes)) {
-    indexes <- as.list(indexes)
-  }
-  if (!is.list(unique_indexes)) {
-    unique_indexes <- as.list(unique_indexes)
-  }
-
-  con <- con_acquire(x$src)
-  tryCatch({
-    vars <- op_vars(x)
-    assertthat::assert_that(all(unlist(indexes) %in% vars))
-    assertthat::assert_that(all(unlist(unique_indexes) %in% vars))
-    x_aliased <- select_(x, .dots = vars) # avoids problems with SQLite quoting (#1754)
-    name <- db_save_query(con, sql_render(x_aliased),
-      name = name, temporary = temporary)
-    db_create_indexes(con, name, unique_indexes, unique = TRUE)
-    db_create_indexes(con, name, indexes, unique = FALSE)
-  }, finally = {
-    con_release(x$src, con)
-  })
-
-  tbl(x$src, name) %>% group_by_(.dots = groups(x))
-}

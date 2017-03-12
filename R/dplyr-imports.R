@@ -33,4 +33,3 @@ random_table_name <- function (n = 10, temp = FALSE) {
 }
 
 compact <- function(x) Filter(Negate(is.null), x)
-
