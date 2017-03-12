@@ -1,9 +1,11 @@
-Package: RSQLServer
+Package: dplyr.sqlserver
 Type: Package
-Title: SQL Server R Database Interface (DBI) and dplyr SQL Backend
-Version: 0.2.099
-Date: 2016-03-22
-Authors@R: c(person("Imanuel", "Costigan", role = c("aut", "cre"),
+Title: Connect dplyr to sqlserver
+Version: 0.1.0
+Author@R: Authors@R: c(
+             person("Bram", "Plouvier", role = c("aut", "cre"),
+                    email = "bramplouvier@gmail.com"),
+             person("Imanuel", "Costigan", role = c("aut"),
                     email = "i.costigan@me.com"),
              person("The jTDS Project (for MSSQL Server driver)",
                     role = "aut"),
@@ -19,39 +21,22 @@ Authors@R: c(person("Imanuel", "Costigan", role = c("aut", "cre"),
                     role = "ctb"),
              person("RStudio", role = "cph"),
              person("The Legion Of The Bouncy Castle", role = c("cph", "ctb")))
-Description: Utilises The jTDS Project's JDBC 3.0 SQL Server
-    driver to extend DBI classes and methods. The package also
-    implements a SQL backend to the dplyr package.
-License: GPL-2
-Depends:
-    R (>= 3.2.0)
+Maintainer: Bram Plouvier <bramplouvier@gmail.com>
+Description: Provides a dplyr backend for Microsoft SQL Server using the DBI implementation from the rstats-db/odbc package. Partial fork of the RSQLServer package. 
+License: GPLv2
+URL: https://github.com/bplouvier/dplyr.sqlserver
 Imports:
-    methods (>= 3.2.0),
-    DBI (>= 0.5.0),
-    rJava (>= 0.9.6),
-    dplyr (>= 0.5.0.9000),
-    assertthat (>= 0.1),
-    yaml (>= 2.1.13),
-    purrr (>= 0.2.1)
+  DBI (>= 0.3.0),
+  methods,
+  odbc,
+  dplyr,
+  purrr
 Suggests:
-    testthat,
-    DBItest (>= 1.4),
-    covr
-Remotes: hadley/dplyr@63d4a9f5
-SystemRequirements: Java (>= 1.3)
-URL: https://github.com/imanuelcostigan/RSQLServer
-BugReports: https://github.com/imanuelcostigan/RSQLServer/issues
-Collate:
-    'RSQLServer.R'
-    'Utils.R'
-    'dbi-classes.R'
-    'dbi-methods.R'
-    'dbi-shims.R'
-    'dbi-tables.R'
+  DBItest, testthat
+Encoding: UTF-8
+LazyData: true
+Collate: 
     'dplyr-imports.R'
-    'dplyr.R'
-    'java-shims.R'
-    'jdbc-methods.R'
-    'onLoad.R'
-    'sql-backends.R'
-RoxygenNote: 5.0.1
+    'db-sqlserver.R'
+    'src_sqlserver.R'
+RoxygenNote: 6.0.1
