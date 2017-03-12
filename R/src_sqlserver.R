@@ -31,19 +31,39 @@
 #' # See dplyr documentation for further information on data operations
 #' }
 #' @export
-src_sqlserver <- function(host = NULL, database = NULL, user = NULL, password = NULL, ...) {
+src_sqlserver <- function(dsn = NULL, ..., driver = NULL, 
+                          server = NULL, database = NULL, user = NULL, password = NULL, 
+                          .connection_string = NULL) {
   if (!requireNamespace("odbc", quietly = TRUE)) {
     stop("odbc package required to connect to SQL Server db", call. = FALSE)
   }
-  driver='ODBC Driver 13 for SQL Server'
+  
+  file <- purrr::`%||%`(file.path(Sys.getenv("HOME"), "sql.yaml"), '')
+  
+  # Use sql.yaml file if file is not missing. If so, then the paramaters
+  # type, port and connection properties will be ignored and the
+  # information in sql.yaml will be used instead.
+  if (file.exists(file)) {
+    sd <- get_server_details(dsn, file)
+    dsn <- sd$dsn
+    driver <- sd$driver
+    server <- sd$server
+    database <- sd$database
+    user <- sd$user
+    password <- sd$password
+    port <- sd$port
+  }
+  
   con <- DBI::dbConnect(
     odbc::odbc(),
+    dsn = dsn,
     driver = 'ODBC Driver 13 for SQL Server',
     database = database,
     uid = user,
     pwd = password,
-    server = host,
-    port = 1433, ...
+    server = server,
+    port = port, 
+    ...
   )
   src <- dplyr::src_dbi(con, auto_disconnect = TRUE)
   newclass <- c('src_sqlserver', class(src))

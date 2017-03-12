@@ -4,15 +4,15 @@
 \alias{src_sqlserver}
 \title{Connect to SQLServer or Sybase}
 \usage{
-src_sqlserver(host = NULL, database = NULL, user = NULL,
-  password = NULL, ...)
+src_sqlserver(dsn = NULL, ..., driver = NULL, server = NULL,
+  database = NULL, uid = NULL, pwd = NULL, .connection_string = NULL)
 }
 \arguments{
+\item{server}{the server address or recognised alias thereof.}
+
 \item{database}{the name of the database hosted on the \code{server}. If an
 empty string or \code{NULL} (default), a connection to the default
 database on \code{server} is assumed.}
-
-\item{server}{the server address or recognised alias thereof.}
 
 \item{file}{defaults to using the server details file in
 \code{$HOME/sql.yaml}. The server details including \code{type},

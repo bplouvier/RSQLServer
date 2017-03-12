@@ -29,14 +29,17 @@ Imports:
   DBI (>= 0.3.0),
   dplyr (>= 0.5.0),
   odbc (>= 1.0.1),
-  purrr,
-  methods
+  purrr (>= 0.2.1),
+  methods (>= 3.2.0),
+  assertthat (>= 0.1),
+  yaml (>= 2.1.13)
 Suggests:
   DBItest, testthat
 Encoding: UTF-8
 LazyData: true
 Collate: 
     'dplyr-imports.R'
+    'Utils.R'
     'db-sqlserver.R'
     'src_sqlserver.R'
 RoxygenNote: 6.0.1

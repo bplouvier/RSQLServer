@@ -4,21 +4,6 @@ NULL
 #' @import dplyr
 NULL
 
-sqlserver_version <- function (dbObj, ...) {
-  parse_version <- function(odbc_con) {
-    version_str <- dbGetInfo(odbc_con)$db.version
-    as.integer(strsplit(version_str, '.', TRUE)[[1]][1])
-  }
-  version <- switch(class(dbObj)[1],
-                    OdbcDriver = 0,
-                    OdbcConnection = parse_version(dbObj),
-                    OdbcResult = parse_version(dbObj@connection),
-                    error("Unknown DBIObject", call. = FALSE)
-  )
-  if (version == 0) warning("Unknown SQL Server version. Try calling 'sqlserver_version' on a OdbcConnection or OdbcResult object.")
-  return(version)
-}
-
 #' @importFrom dplyr db_has_table build_sql escape
 #' @export
 db_has_table.OdbcConnection <- function (con, table) {
