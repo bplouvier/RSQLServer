@@ -65,7 +65,7 @@ src_sqlserver <- function(dsn = NULL, ..., driver = NULL,
     port = port, 
     ...
   )
-  src <- dplyr::src_dbi(con, auto_disconnect = TRUE)
+  src <- dbplyr::src_dbi(con, auto_disconnect = TRUE)
   newclass <- c('src_sqlserver', class(src))
   class(src) <- newclass
   src
