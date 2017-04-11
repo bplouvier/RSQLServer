@@ -4,7 +4,8 @@ NULL
 #' @import dplyr
 NULL
 
-#' @importFrom dplyr db_has_table build_sql escape
+#' @importFrom dplyr db_has_table
+#' @importFrom dbplyr build_sql escape
 #' @export
 db_has_table.OdbcConnection <- function (con, table) {
   if (substr(table, 1, 1) == '#') {
@@ -52,25 +53,7 @@ db_insert_into.OdbcConnection <- function(con, table, values, ...) {
   DBI::dbWriteTable(con, table, values, append = TRUE)
 }
 
-#' @importFrom dplyr db_create_index
-#' @export
-db_create_index.OdbcConnection <- function(con, table, columns,
-  name = NULL, unique = FALSE, ...) {
-  # Modified from:
-  # https://github.com/hadley/dplyr/blob/053a996cb12aeb8c0ac305cbe268c5590a4ea3e5/R/dbi-s3.r#L151
-  # Work around: https://github.com/hadley/dplyr/issues/1912
-  # SQL Server index creation does not return result set so dbGetQuery fails.
-  assertthat::assert_that(assertthat::is.string(table), is.character(columns))
-  name <- name %||% paste0(c(table, columns), collapse = "_")
-  fields <- escape(ident(columns), parens = TRUE, con = con)
-  sql <- build_sql(
-    "CREATE ", if (unique) sql("UNIQUE "), "INDEX ", ident(name),
-    " ON ", ident(table), " ", fields,
-    con = con)
-  assertthat::is.number(dbExecute(con, sql))
-}
-
-#' @importFrom dplyr db_analyze ident build_sql
+#' @importFrom dplyr db_analyze
 #' @export
 db_analyze.OdbcConnection <- function (con, table, ...) {
   TRUE
@@ -78,7 +61,7 @@ db_analyze.OdbcConnection <- function (con, table, ...) {
 
 # Inherited db_create_index.DBIConnection method from dplyr
 
-#' @importFrom dplyr db_explain
+#' @importFrom dplyr db_explain %>%
 #' @export
 db_explain.OdbcConnection <- function (con, sql, ...) {
   # SET SHOWPLAN_ALL available from SQL Server 2000 on.
@@ -93,14 +76,8 @@ db_explain.OdbcConnection <- function (con, sql, ...) {
   paste(utils::capture.output(print(res)), collapse = "\n")
 }
 
-#' @importFrom dplyr src_desc
-#' @export
-src_desc.OdbcConnection <- function(con) {
-  info <- dbGetInfo(con)
-  paste0(info$dbms.name, " ", info$db.version, " [", info$dbname, "]")
-}
-
-#' @importFrom dplyr sql_select sql
+#' @importFrom dplyr sql_select
+#' @importFrom dbplyr sql
 #' @importFrom purrr %||%
 #' @export
 sql_select.OdbcConnection <- function (con, select, from, where = NULL,
@@ -180,7 +157,7 @@ sql_select.OdbcConnection <- function (con, select, from, where = NULL,
 }
 
 
-#' @importFrom dplyr escape
+#' @importFrom dbplyr escape
 mssql_top <- function (con, n, is_percent = NULL) {
   # https://technet.microsoft.com/en-us/library/aa259187(v=sql.80).aspx
   # https://msdn.microsoft.com/en-us/library/ms189463(v=sql.90).aspx
@@ -211,8 +188,8 @@ mssql_top <- function (con, n, is_percent = NULL) {
 # MSSQL 2008r2*: https://technet.microsoft.com/en-US/library/ms173454(v=sql.100).aspx
 # MSSQL 2012*: https://technet.microsoft.com/en-US/library/ms173454(v=sql.110).aspx
 # MSSQL 2014: https://technet.microsoft.com/en-US/library/ms173454(v=sql.120).aspx
-#' @importFrom dplyr sql_translate_env sql_variant sql_translator base_scalar
-#' @importFrom dplyr base_agg sql_prefix base_win
+#' @importFrom dplyr sql_translate_env
+#' @importFrom dbplyr base_agg base_scalar sql_prefix base_win sql_variant sql_translator
 #' @export
 sql_translate_env.OdbcConnection <- function (con) {
   sql_variant(
@@ -251,4 +228,49 @@ db_commit.OdbcConnection <- function(con) {
 #' @export
 db_rollback.OdbcConnection <- function(con) {
   invisible(TRUE)
+}
+
+#' @export
+#' @importFrom dbplyr db_copy_to
+#' @importFrom dplyr db_write_table db_data_type
+db_copy_to.SQLServerConnection <- function(con, table, values,
+                                           overwrite = FALSE, types = NULL, temporary = TRUE,
+                                           unique_indexes = NULL, indexes = NULL,
+                                           analyze = TRUE, ...) {
+  
+  # Modified version of dbplyr method.
+  # SQL Server doesn't have ANALYZE TABLE support so this part of
+  # db_copy_to() has been dropped
+  
+  types <- types %||% db_data_type(con, values)
+  names(types) <- names(values)
+  if (overwrite) {
+    db_drop_table(con, table, force = TRUE)
+  }
+  db_write_table(con, table, types = types, values = values,
+                 temporary = temporary)
+  db_create_indexes(con, table, unique_indexes, unique = TRUE)
+  db_create_indexes(con, table, indexes, unique = FALSE)
+  table
+}
+
+#' @importFrom dplyr db_create_indexes
+#' @importFrom dbplyr db_compute
+#' @export
+db_compute.SQLServerConnection <- function(con, table, sql, temporary = TRUE,
+                                           unique_indexes = list(), indexes = list(), ...) {
+  # Modified from dbplyr because db_save_query returns a temp table name which
+  # must be used by subsequent method calls.
+  if (!is.list(indexes)) {
+    indexes <- as.list(indexes)
+  }
+  if (!is.list(unique_indexes)) {
+    unique_indexes <- as.list(unique_indexes)
+  }
+  
+  table <- db_save_query(con, sql, table, temporary = temporary)
+  db_create_indexes(con, table, unique_indexes, unique = TRUE)
+  db_create_indexes(con, table, indexes, unique = FALSE)
+  
+  table
 }

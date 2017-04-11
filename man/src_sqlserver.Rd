@@ -5,7 +5,8 @@
 \title{Connect to SQLServer or Sybase}
 \usage{
 src_sqlserver(dsn = NULL, ..., driver = NULL, server = NULL,
-  database = NULL, uid = NULL, pwd = NULL, .connection_string = NULL)
+  database = NULL, user = NULL, password = NULL,
+  .connection_string = NULL)
 }
 \arguments{
 \item{server}{the server address or recognised alias thereof.}
